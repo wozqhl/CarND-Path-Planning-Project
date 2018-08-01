@@ -244,7 +244,292 @@ int main() {
 
 
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
-          	msgJson["next_x"] = next_x_vals;
+          	ofstream single_iteration_log;
+            single_iteration_log.open("path_planning_log-single_iteration.csv");
+
+            // ********************* CONSTRUCT INTERPOLATED WAYPOINTS OF NEARBY AREA **********************
+            int num_waypoints = map_waypoints_x.size();
+            int next_waypoint_index = NextWaypoint(car_x,car_y,car_yaw,map_waypoints_x,map_waypoints_y);
+            vector<double> coarse_waypoints_s,coarse_waypoints_x,coarse_waypoints_y,
+                           coarse_waypoints_dx,coarse_waypoints_dy;
+
+            for (int i = -NUM_WAYPOINTS_BEHIND; i < NUM_WAYPOINTS_AHEAD; i++){
+              // for smoothing, take so many previous and so many subsequent waypoints
+              int idx = (next_waypoint_index+i) % num_waypoints;
+              if (idx < 0){
+                // correct for wrap
+                idx += num_waypoints;
+              }
+              // correct for wrap in s for spline interpolation (must be continuous)
+              double current_s = map_waypoints_s[idx];
+              double base_s = map_waypoints_s[next_waypoint_index];
+              if (i < 0 && current_s >base_s)
+              {
+                current_s -= TRACK_LENGTH;
+              }
+              if (i > 0 && current_s < base_s)
+              {
+                current_s += TRACK_LENGTH;
+              }
+              coarse_waypoints_s.push_back(current_s);
+              coarse_waypoints_x.push_back(map_waypoints_x[idx]);
+              coarse_waypoints_y.push_back(map_waypoints_y[idx]);
+              coarse_waypoints_dx.push_back(map_waypoints_dx[idx]);
+              coarse_waypoints_dy.push_back(map_waypoints_dy[idx]);
+            }
+
+            // interpolation parameters
+            double dist_inc = 0.5;
+            int num_interpolation_points = (coarse_waypoints_s[coarse_waypoints_s.size()-1] - coarse_waypoints_s[0]) / dist_inc;
+            vector<double> interpolated_waypoints_s,interpolated_waypoints_x,interpolated_waypoints_y,
+                           interpolated_waypoints_dx,interpolated_waypoints_dy;
+            // interpolated s is simply...
+            interpolated_waypoints_x = interpolate_points(coarse_waypoints_s,coarse_waypoints_x,dist_inc,num_interpolation_points);
+            interpolated_waypoints_y = interpolate_points(coarse_waypoints_s,coarse_waypoints_y,dist_inc,num_interpolation_points);
+            interpolated_waypoints_dx = interpolate_points(coarse_waypoints_s,interpolated_waypoints_dx,dist_inc,num_interpolation_points);
+            interpolated_waypoints_dy = interpolate_points(coarse_waypoints_s,interpolated_waypoints_dy,dist_inc,num_interpolation_points);
+            
+            // **************** DETERMINE EGO CAR PARAMETERS AND CONSTRUCT VEHICLE OBJECT ******************
+            // Vehicle class requires s,s_d,s_dd,d,d_d,d_dd - in that order
+            double pos_x,pos_y,pos_x2,pos_y2,angle,vel_x1,vel_y1,
+                   pos_x3,pos_y3,vel_x2,vel_y2,acc_x,acc_x,acc_y;
+
+            int subpath_size = min(PREVIOUS_PATH_POINTS_TO_KEEP,(int)previous_path_x.size());
+            double traj_start_time = subpath_size * PATH_DT;
+
+            // use default values if not enough previous path points
+            if (subpath_size < 4){
+              pos_x = car_x;
+              pos_y = car_y;
+              angle = deg2rad(car_yaw);
+              pos_s = car_s;
+              pos_d = car_d;
+              s_dot = car_speed;
+              d_dot = car_speed;
+              s_ddot = 0;
+              d_ddot = 0;
+            } else{
+              // consider current position to be last point of previous path to be kept
+              pos_x = previous_path_x[subpath_size-1];
+              pos_y = previous_path_y[subpath_size-1];
+              pos_x2 = previous_path_x[subpath_size-2];
+              pos_y2 = previous_path_y[subpath_size-2];
+              angle = atan2(pos_y-pos_y2,pos_x-pos_x2); 
+              vector<double> frenet = getFrenet(pos_x,pos_y,angle,interpolated_waypoints_x,interpolated_waypoints_y,interpolated_waypoints_s);
+              pos_s = frenet[0];
+              pos_d = frenet[1];
+              // determine dx,dy vector from set of interpoated waypoints,with pos_x,pos_y as reference point;
+              // since interpolated waypoints are ~1m apart and path points tend to be <0.5m apart,these
+              // values can be reused for previous two points (and using the previous waypoint data may be 
+              // more accurate) to calculate vel_s (s_dot),vel_d (d_dot),acc_s (s_ddot),and acc_d (d_ddot)
+              int next_interp_waypoint_index = NextWaypoint(pos_x,pos_y,angle,interpolated_waypoints_x,interpolated_waypoints_y);
+
+              double dx = interpolated_waypoints_dx[next_interp_waypoint_index - 1];
+              double dy = interpolated_waypoints_dy[next_interp_waypoint_index - 1];
+              // sx,sy vector is perpendicular to dx,dy
+              double sx = -dy;
+              double sy = dx;
+
+              // calculate s_dot & d_dot
+              vel_x1 = (pos_x - pos_x2)/ PATH_DT;
+              vel_y1 = (pos_y - pos_y2)/ PATH_DT;
+              // want projection of xy velocity vector (V) onto S (sx,sy) and D (dx,dy) vectors,and since S
+              // and D are unit vectors this is simply the dot products of V with S and V with D
+              s_dot = vel_x1 * sx + vel_y1 * sy;
+              d_dot = vel_x1 * dx + vel_y1 * dy;
+
+              // have to get another point to calculate s_ddot,d_ddot from xy acceleration
+              pos_x3 = previous_path_x[subpath_size-3];
+              pos_y3 = previous_path_y[subpath_size-3];
+              vel_x2 = (pos_x2 - pos_x3) / PATH_DT;
+              vel_y2 = (pos_y2 - pos_y3) / PATH_DT;
+              acc_x = (vel_x1 - vel_x2) / PATH_DT;
+              acc_y = (vel_y1 - vel_y2) / PATH_DT;
+              s_ddot = acc_x * sx + acc_y * sy;
+              d_ddot = acc_x * dx + acc_y * dy;
+
+              // try,insted,differentiating trajectory coefficients
+              double eval_time, pos_s2,pos_d2,s_dot2,d_dot2,s_ddot2,d_ddot2;
+              vector<double> s_dot_coeffs = my_car.differentiate_coeffs(my_car.s_traj_coeffs);
+              vector<double> d_dot_coeffs = my_car.differentiate_coeffs(my_car.d_traj_coeffs);
+              vector<double> s_ddot_coeffs = my_car.differentiate_coeffs(s_dot_coeffs);
+              vector<double> d_ddot_coeffs = my_car.differentiate_coeffs(d_dot_coeffs);
+              eval_time = (NUM_PATH_POINTS - subpath_size) * PATH_DT;
+              pos_s2 = my_car.evaluate_coeffs_at_time(my_car.s_traj_coeffs,eval_time);
+              pos_d2 = my_car.evaluate_coeffs_at_time(my_car.d_traj_coeffs,eval_time);
+              s_dot2 = my_car.evaluate_coeffs_at_time(s_dot_coeffs,eval_time);
+              d_dot2 = my_car.evaluate_coeffs_at_time(d_dot_coeffs,eval_time);
+              s_ddot2 = my_car.evaluate_coeffs_at_time(s_ddot_coeffs,eval_time);
+              d_ddot2 = my_car.evaluate_coeffs_at_time(d_ddot_coeffs,eval_time); 
+
+            }
+
+            my_car.s = pos_s;        // s positon
+            my_car.s_d = s_dot;      // s dot - velocity in s
+            my_car.s_dd = s_ddot;    // s dot-dot - acceleration in s
+            my_car.d    = pos_d;     // d position
+            my_car.d_d  = d_dot;     // d dot - velocity in d
+            my_car.d_dd = d_ddot;    // d dot-dot - accelaration in d
+
+            // ********************* GENERATE PREDICTIONS FROM SENSOR FUSION DATA **************************
+            // The data format for each car is: [id,x,y,vx,vy,s,d]. The id is a unique identifier for that car. 
+            // The x,y values are in global map coordinates, and the vx,vy values are the velocity components,also 
+            // in reference to the global map. Finally s and d are the Frenet coordinates for that car.
+            double duration = N_SAMPLES * DT - subpath_size * PATH_DT;
+            vector<Vehicle> other_cars;
+            map<int,vector<vector<double>>> predictions;
+            for (auto sf:sensor_fusion){
+              double other_car_vel = sqrt(pow((double)sf[3],2) + pow((double)sf[4],2));
+              Vehicle other_car = Vehicle(sf[5],other_car_vel,0,sf[6],0,0);
+              other_cars.push_back(other_car);
+              int v_id = sf[0];
+              vector<vector<double>> preds = other_car.generate_predictions(traj_start_time,duration);
+              predictions[v_id] = preds;
+            }
+
+            // Add a little ADAS-like warning system - if any other car is immediately to left or right, set a
+            // flag to be used for hard limitting available states (i.e. if there is a car to the left,prevent 
+            // Lane Change Left as an available state)
+            bool car_to_left = false, car_to_right = false,car_just_ahead = false;
+            for (Vehicle other_car:other_cars){
+              double s_diff = fabs(other_car.s - car_s);
+              if (s_diff < FOLLOW_DISTANCE){
+                cout << "s_diff: " << s_diff << endl;
+                double d_diff = other_car.d - car_d;
+                if (d_diff > 2 && d_diff < 6){
+                  car_to_right = true;
+                } else if (d_diff < -2 && d_diff > -6){
+                  car_to_left = true;
+                } else if (d_diff > -2 && d_diff < 2){
+                  car_just_ahead = true;
+                }
+              }
+            }
+
+            // DEBUG
+            if (car_to_right) cout << "CAR ON THE RIGHT!!!" << endl;
+            if (car_to_left) cout << "CAR ON THE LEFT!!!" << endl;
+            if (car_just_ahead) cout << "CAR JUST AHEAD!!!" << endl;
+            
+            // ******************************* DETERMINE BEST TRAJECTORY ***********************************
+            my_car.update_available_states(car_to_left,car_to_right);
+
+            vector<vector<double>> best_frenet_traj, best_target;
+            double best_cost = 999999;
+            string best_traj_state = "";
+            for (string state: my_car.available_states){
+              vector<vector<double>> target_s_and_d = my_car.get_target_for_state(state,predictions,duration,car_just_ahead);
+            }
+            
+            vector<vector<double>> possible_traj = my_car.generate_traj_for_target(target_s_and_d,duration);
+
+            double current_cost = calculate_total_cost(possible_traj[0],possible_traj[1],predictions);
+
+            if (current_cost < best_cost){
+              best_cost = current_cost;
+              best_frenet_traj = possible_traj;
+              best_traj_state = state;
+              best_target = target_s_and_d;
+            }
+
+            // LOG
+            single_iteration_log << "i,ego s,ego d,s1,d1,s2,d2,s3,d3,s4,d4,s5,d5,s6,d6,s7,d7,s8,d8,s9,d9,s10,d10,s11,d11,s12,d12" << endl;
+            for (int i = 0; i < best_frenet_traj[0].size();i++){
+              single_iteration_log << i << ",";
+              single_iteration_log << best_frenet_traj[0][i] << "," << best_frenet_traj[1][i] << ",";
+              for (auto prediction : predictions){
+                vector<vector<double>> pred_traj = prediction.second;
+                single_iteration_log << pred_traj[i][0] << "," << pred_traj[i][1] << ",";
+              }
+              single_iteration_log << endl;
+            }
+
+            // ********************* PRODUCE NEW PATH ***********************
+            // begin by pushing the last and next-to-last point from the previous path for setting the 
+            // spline the last point should be the first point in the returned trajectory, but because of 
+            // imprecision, also add that point manually
+            
+            vector<double> coarse_s_traj, coarse_x_traj,coarse_y_traj,interpolated_s_traj,
+                           interpolated_x_traj,interpolated_y_traj;
+
+            double prev_s = pos_s - s_dot * PATH_DT;
+
+            // first two points of coarse trajectory, to ensure spline begins smoothly
+            if (subpath_size >= 2) {
+              coarse_s_traj.push_back(prev_s);
+              coarse_x_traj.push_back(previous_path_x[subpath_size-2]);
+              coarse_y_traj.push_back(previous_path_y[subpath_size-2]);
+              coarse_s_traj.push_back(pos_s);
+              coarse_x_traj.push_back(previous_path_x[subpath_size-1]);
+              coarse_y_traj.push_back(previous_path_y[subpath_size-1]);
+            } else {
+              double prev_s = pos_s - 1;
+              double prev_x = pos_x - cos(angle);
+              double prev_y = pos_y - sin(angle);
+              coarse_s_traj.push_back(prev_s);
+              coarse_x_traj.push_back(prev_x);
+              coarse_y_traj.push_back(prev_y);
+              coarse_s_traj.push_back(pos_s);
+              coarse_x_traj.push_back(pos_x);
+              coarse_y_traj.push_back(pos_y);
+            }
+
+            // last two points of coarse trajectory, use target_d and current s + 30,60
+            double target_s1 = pos_s + 30;
+            double target_d1 = best_target[1][0];
+            vector<double> target_xy1 = getXY(target_s1,target_d1,interpolated_waypoints_s,interpolated_waypoints_x,interpolated_waypoints_y);
+            double target_x1 = target_xy1[0];
+            double target_y1 = target_xy1[1];
+            coarse_s_traj.push_back(target_s1);
+            coarse_x_traj.push_back(target_x1);
+            coarse_y_traj.push_back(target_y1);
+            double target_s2 = target_s1 + 30;
+            double target_d2 = target_d1;
+            vector<double> target_xy2 = getXY(target_s1,target_d1,interpolated_waypoints_s,interpolated_waypoints_x,interpolated_waypoints_y);
+            double target_x2 = target_xy2[0];
+            double target_y2 = target_xy2[1];
+            coarse_s_traj.push_back(target_s2);
+            coarse_x_traj.push_back(target_x2);
+            coarse_y_traj.push_back(target_y2);
+
+            // next s values
+            double target_s_dot = best_target[0][1];
+            double current_s = pos_s;
+            double current_v = s_dot;
+            double current_a = s_ddot; 
+            for (int i = 0; i < (NUM_PATH_POINTS - subpath_size); i++) {
+              double v_incr,a_incr;
+              if (fabs(target_s_dot - current_v) < 2 * VELOCITY_INCREMENT_LIMIT){
+                v_incr = 0;
+              } else {
+                v_incr = target_s_dot - current_v)/(fabs(target_s_dot - current_v))*VELOCITY_INCREMENT_LIMIT;
+              }
+              current_v += v_incr;
+              current_s += current_v * PATH_DT;
+              interpolated_s_traj.push_back(current_s);
+            }
+
+            interpolated_x_traj = interpolate_points(coarse_s_traj,coarse_x_traj,interpolated_s_traj);
+            interpolated_y_traj = interpolate_points(coarse_s_traj,coarse_y_traj,interpolated_s_traj);
+
+            // add previous path,if any, to next path
+            for(int i = 0; i < subpath_size; i++){
+              next_x_vals.push_back(previous_path_x[i]);
+              next_y_vals.push_back(previous_path_y[i]);
+            }
+            // add xy points from newly generated path
+            for (int i = 0; i < interpolated_x_traj.size(); i++){
+              next_x_vals.push_back(interpolated_x_traj[i]);
+              next_y_vals.push_back(interpolated_y_traj[i]);
+            }
+            // add xy points from newly generated path
+            for (int i = 0; i < interpolated_x_traj.size(); i++){
+              next_x_vals.push_back(interpolated_x_traj[i]);
+              next_y_vals.push_back(interpalated_y_traj[i]);
+            }
+
+
+            msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
 
           	auto msg = "42[\"control\","+ msgJson.dump()+"]";
