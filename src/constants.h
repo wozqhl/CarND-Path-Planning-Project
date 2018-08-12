@@ -35,19 +35,11 @@
 // sigma values for perturbing targets
 #define SIGMA_S 10.0               // s
 #define SIGMA_S_DOT 3.0            // s_dot
-#define SIGMA_S_DOT 0.1            // s
+#define SIGMA_S_DDOT 0.1            // s
 #define SIGMA_D 0                  // d
 #define SIGMA_D_DOT 0              // d_dot
 #define SIGMA_D_DDOT 0             // d_double_dot
 #define SIGMA_T 0.05    
-
-#define SIGMA_S 10.0               // s
-#define SIGMA_S_DOT 3.0            // s_dot
-#define SIGMA_S_DDOT 0.1           // s
-#define SIGMA_D 0                  // d
-#define SIGMA_D_DOT 0              //d_dot
-#define SIGMA_D_DDOT 0             //d_double_dot
-#define SIGMA_T 0.05
 
 #define MAX_INSTANTANEOUS_JERK 10  // m/s/s/s
 #define MAX_INSTANTANEOUS_ACCEL 10 // m/s/s

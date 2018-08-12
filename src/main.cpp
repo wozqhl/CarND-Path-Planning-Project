@@ -5,9 +5,14 @@
 #include <iostream>
 #include <thread>
 #include <vector>
+#include <algorithm>
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
+#include "smoother.h"
+#include "constants.h"
+#include "vehicle.h"
+#include "costs.h"
 
 using namespace std;
 
@@ -87,7 +92,7 @@ int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x,
 }
 
 // Transform from Cartesian x,y coordinates to Frenet s,d coordinates
-vector<double> getFrenet(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
+vector<double> getFrenet(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y,vector<double> maps_s)
 {
 	int next_wp = NextWaypoint(x,y, theta, maps_x,maps_y);
 
@@ -173,12 +178,16 @@ int main() {
   vector<double> map_waypoints_dx;
   vector<double> map_waypoints_dy;
 
+  Vehicle my_car = Vehicle();
+
   // Waypoint map to read from
   string map_file_ = "../data/highway_map.csv";
   // The max s value before wrapping around the track back to 0
   double max_s = 6945.554;
 
   ifstream in_map_(map_file_.c_str(), ifstream::in);
+  ofstream log_file;
+  log_file.open("path_planning_log.csv");
 
   string line;
   while (getline(in_map_, line)) {
@@ -200,7 +209,7 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&my_car,&log_file](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -291,8 +300,11 @@ int main() {
             
             // **************** DETERMINE EGO CAR PARAMETERS AND CONSTRUCT VEHICLE OBJECT ******************
             // Vehicle class requires s,s_d,s_dd,d,d_d,d_dd - in that order
+            double pos_s, s_dot, s_ddot;
+            double pos_d, d_dot, d_ddot;
+            // Other values necessary for determing these based on future points in previous path
             double pos_x,pos_y,pos_x2,pos_y2,angle,vel_x1,vel_y1,
-                   pos_x3,pos_y3,vel_x2,vel_y2,acc_x,acc_x,acc_y;
+                         pos_x3,pos_y3,vel_x2,vel_y2,acc_x,acc_y;
 
             int subpath_size = min(PREVIOUS_PATH_POINTS_TO_KEEP,(int)previous_path_x.size());
             double traj_start_time = subpath_size * PATH_DT;
@@ -419,18 +431,20 @@ int main() {
             string best_traj_state = "";
             for (string state: my_car.available_states){
               vector<vector<double>> target_s_and_d = my_car.get_target_for_state(state,predictions,duration,car_just_ahead);
+
+              vector<vector<double>> possible_traj = my_car.generate_traj_for_target(target_s_and_d,duration);
+
+              double current_cost = calculate_total_cost(possible_traj[0], possible_traj[1], predictions);
+
+              if (current_cost < best_cost){
+                 best_cost = current_cost;
+                 best_frenet_traj = possible_traj;
+                 best_traj_state = state;
+                 best_target = target_s_and_d;
+                 }
             }
             
-            vector<vector<double>> possible_traj = my_car.generate_traj_for_target(target_s_and_d,duration);
-
-            double current_cost = calculate_total_cost(possible_traj[0],possible_traj[1],predictions);
-
-            if (current_cost < best_cost){
-              best_cost = current_cost;
-              best_frenet_traj = possible_traj;
-              best_traj_state = state;
-              best_target = target_s_and_d;
-            }
+ 
 
             // LOG
             single_iteration_log << "i,ego s,ego d,s1,d1,s2,d2,s3,d3,s4,d4,s5,d5,s6,d6,s7,d7,s8,d8,s9,d9,s10,d10,s11,d11,s12,d12" << endl;
@@ -502,7 +516,7 @@ int main() {
               if (fabs(target_s_dot - current_v) < 2 * VELOCITY_INCREMENT_LIMIT){
                 v_incr = 0;
               } else {
-                v_incr = target_s_dot - current_v)/(fabs(target_s_dot - current_v))*VELOCITY_INCREMENT_LIMIT;
+                v_incr = (target_s_dot - current_v)/(fabs(target_s_dot - current_v))*VELOCITY_INCREMENT_LIMIT;
               }
               current_v += v_incr;
               current_s += current_v * PATH_DT;
@@ -521,11 +535,6 @@ int main() {
             for (int i = 0; i < interpolated_x_traj.size(); i++){
               next_x_vals.push_back(interpolated_x_traj[i]);
               next_y_vals.push_back(interpolated_y_traj[i]);
-            }
-            // add xy points from newly generated path
-            for (int i = 0; i < interpolated_x_traj.size(); i++){
-              next_x_vals.push_back(interpolated_x_traj[i]);
-              next_y_vals.push_back(interpalated_y_traj[i]);
             }
 
 

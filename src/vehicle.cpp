@@ -221,7 +221,7 @@ vector<vector<double>> Vehicle::generate_traj_for_target(vector<vector<double>> 
 	return {s_traj,d_traj};
 }
 
-vector<double> Vehicle::difference_coeffs(vector<double> coeffs){
+vector<double> Vehicle::differentiate_coeffs(vector<double> coeffs){
 	vector<double> diff_coeffs;
 	for (int i = 1; i < coeffs.size(); i++){
 		diff_coeffs.push_back(i * coeffs[i]);

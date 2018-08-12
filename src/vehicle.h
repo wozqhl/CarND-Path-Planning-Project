@@ -21,6 +21,12 @@ public:
 	vector<double> s_traj_coeffs,d_traj_coeffs;
 
 	/**
+	 * Constructors
+	 */
+	Vehicle();
+	Vehicle(double s,double s_d,double s_dd,double d,double d_d,double d_dd);
+
+	/**
 	 * Destructor
 	 */
 	virtual ~Vehicle();
