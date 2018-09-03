@@ -61,8 +61,7 @@ void Vehicle::update_available_states(bool car_to_left,bool car_to_right){
 	if (this->d > 4 && !car_to_left){
 		this->available_states.push_back("LCL");
 	}
-	if (this->d < 8 && !car_to_right)
-	{
+	if (this->d < 8 && !car_to_right){
 		this->available_states.push_back("LCR");
 	}
 }
@@ -147,8 +146,7 @@ vector<double> Vehicle::get_leading_vehicle_data_for_lane(int target_lane,map<in
 			double next_to_last_s = pred_traj[pred_traj.size()-2][0];
 			double dt = duration / N_SAMPLES;
 			double predicted_s_dot = (predicted_end_S - next_to_last_s) / dt;
-			if (predicted_end_s < nearest_leading_vehicle_distance && start_s > this->s)
-			{
+			if (predicted_end_s < nearest_leading_vehicle_distance && start_s > this->s){
 				nearest_leading_vehicle_distance = predicted_end_s;
 				nearest_leading_vehicle_speed = predicted_s_dot;
 			}

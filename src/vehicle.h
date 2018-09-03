@@ -43,7 +43,7 @@ public:
 	// DEPRECATED
 	vector<vector<double>> perturb(vector<vector<double>> target_s_and_d);
 
-	vector<vector<double>> generate_traj_for_target(vector<vector<double>> perturbed_traget,double duration);
+	vector<vector<double>> generate_traj_for_target(vector<vector<double>> perturbed_target,double duration);
 
 	vector<double> differentiate_coeffs(vector<double> coeffs);
 

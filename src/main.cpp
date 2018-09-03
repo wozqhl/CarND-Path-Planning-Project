@@ -43,7 +43,7 @@ double distance(double x1, double y1, double x2, double y2)
 {
 	return sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
 }
-int ClosestWaypoint(double x, double y, const vector<double> &maps_x, const vector<double> &maps_y)
+int ClosestWaypoint(double x, double y, vector<double> maps_x, vector<double> maps_y)
 {
 
 	double closestLen = 100000; //large number
@@ -66,7 +66,7 @@ int ClosestWaypoint(double x, double y, const vector<double> &maps_x, const vect
 
 }
 
-int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
+int NextWaypoint(double x, double y, double theta, vector<double> maps_x, vector<double> maps_y)
 {
 
 	int closestWaypoint = ClosestWaypoint(x,y,maps_x,maps_y);
@@ -76,23 +76,23 @@ int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x,
 
 	double heading = atan2((map_y-y),(map_x-x));
 
-	double angle = fabs(theta-heading);
-  angle = min(2*pi() - angle, angle);
+	double angle = abs(theta-heading);
+  //angle = min(2*pi() - angle, angle);
 
   if(angle > pi()/4)
   {
     closestWaypoint++;
-  if (closestWaypoint == maps_x.size())
-  {
-    closestWaypoint = 0;
-  }
+  //if (closestWaypoint == maps_x.size())
+  //{
+  //  closestWaypoint = 0;
+  //}
   }
 
   return closestWaypoint;
 }
 
 // Transform from Cartesian x,y coordinates to Frenet s,d coordinates
-vector<double> getFrenet(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y,vector<double> maps_s)
+vector<double> getFrenet(double x, double y, double theta, vector<double> maps_x, vector<double> maps_y,vector<double> maps_s)
 {
 	int next_wp = NextWaypoint(x,y, theta, maps_x,maps_y);
 
@@ -128,7 +128,7 @@ vector<double> getFrenet(double x, double y, double theta, const vector<double> 
 	}
 
 	// calculate s value
-	double frenet_s = 0;
+	double frenet_s = maps_s[0];
 	for(int i = 0; i < prev_wp; i++)
 	{
 		frenet_s += distance(maps_x[i],maps_y[i],maps_x[i+1],maps_y[i+1]);
@@ -141,7 +141,7 @@ vector<double> getFrenet(double x, double y, double theta, const vector<double> 
 }
 
 // Transform from Frenet s,d coordinates to Cartesian x,y
-vector<double> getXY(double s, double d, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
+vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> maps_x, vector<double> maps_y)
 {
 	int prev_wp = -1;
 
@@ -235,7 +235,7 @@ int main() {
           	double car_d = j[1]["d"];
           	double car_yaw = j[1]["yaw"];
           	double car_speed = j[1]["speed"];
-
+            car_speed *= 0.44704;
           	// Previous path data given to the Planner
           	auto previous_path_x = j[1]["previous_path_x"];
           	auto previous_path_y = j[1]["previous_path_y"];
@@ -272,12 +272,10 @@ int main() {
               // correct for wrap in s for spline interpolation (must be continuous)
               double current_s = map_waypoints_s[idx];
               double base_s = map_waypoints_s[next_waypoint_index];
-              if (i < 0 && current_s >base_s)
-              {
+              if (i < 0 && current_s >base_s){
                 current_s -= TRACK_LENGTH;
               }
-              if (i > 0 && current_s < base_s)
-              {
+              if (i > 0 && current_s < base_s){
                 current_s += TRACK_LENGTH;
               }
               coarse_waypoints_s.push_back(current_s);
@@ -293,10 +291,15 @@ int main() {
             vector<double> interpolated_waypoints_s,interpolated_waypoints_x,interpolated_waypoints_y,
                            interpolated_waypoints_dx,interpolated_waypoints_dy;
             // interpolated s is simply...
+            interpolated_waypoints_s.push_back(coarse_waypoints_s[0]);
+            for (int i = 1; i < num_interpolation_points; i++){
+              interpolated_waypoints_s.push_back(coarse_waypoints_s[0] + i * dist_inc);
+            }
+
             interpolated_waypoints_x = interpolate_points(coarse_waypoints_s,coarse_waypoints_x,dist_inc,num_interpolation_points);
             interpolated_waypoints_y = interpolate_points(coarse_waypoints_s,coarse_waypoints_y,dist_inc,num_interpolation_points);
-            interpolated_waypoints_dx = interpolate_points(coarse_waypoints_s,interpolated_waypoints_dx,dist_inc,num_interpolation_points);
-            interpolated_waypoints_dy = interpolate_points(coarse_waypoints_s,interpolated_waypoints_dy,dist_inc,num_interpolation_points);
+            interpolated_waypoints_dx = interpolate_points(coarse_waypoints_s,coarse_waypoints_dx,dist_inc,num_interpolation_points);
+            interpolated_waypoints_dy = interpolate_points(coarse_waypoints_s,coarse_waypoints_dy,dist_inc,num_interpolation_points);
             
             // **************** DETERMINE EGO CAR PARAMETERS AND CONSTRUCT VEHICLE OBJECT ******************
             // Vehicle class requires s,s_d,s_dd,d,d_d,d_dd - in that order
@@ -317,7 +320,7 @@ int main() {
               pos_s = car_s;
               pos_d = car_d;
               s_dot = car_speed;
-              d_dot = car_speed;
+              d_dot = 0;
               s_ddot = 0;
               d_ddot = 0;
             } else{
@@ -334,7 +337,8 @@ int main() {
               // since interpolated waypoints are ~1m apart and path points tend to be <0.5m apart,these
               // values can be reused for previous two points (and using the previous waypoint data may be 
               // more accurate) to calculate vel_s (s_dot),vel_d (d_dot),acc_s (s_ddot),and acc_d (d_ddot)
-              int next_interp_waypoint_index = NextWaypoint(pos_x,pos_y,angle,interpolated_waypoints_x,interpolated_waypoints_y);
+              int next_interp_waypoint_index = NextWaypoint(pos_x,pos_y,angle,interpolated_waypoints_x,
+			  interpolated_waypoints_y);
 
               double dx = interpolated_waypoints_dx[next_interp_waypoint_index - 1];
               double dy = interpolated_waypoints_dy[next_interp_waypoint_index - 1];
@@ -406,7 +410,7 @@ int main() {
             for (Vehicle other_car:other_cars){
               double s_diff = fabs(other_car.s - car_s);
               if (s_diff < FOLLOW_DISTANCE){
-                cout << "s_diff: " << s_diff << endl;
+                cout << "s diff: " << s_diff << endl;
                 double d_diff = other_car.d - car_d;
                 if (d_diff > 2 && d_diff < 6){
                   car_to_right = true;
@@ -499,7 +503,7 @@ int main() {
             coarse_y_traj.push_back(target_y1);
             double target_s2 = target_s1 + 30;
             double target_d2 = target_d1;
-            vector<double> target_xy2 = getXY(target_s1,target_d1,interpolated_waypoints_s,interpolated_waypoints_x,interpolated_waypoints_y);
+            vector<double> target_xy2 = getXY(target_s2,target_d2,interpolated_waypoints_s,interpolated_waypoints_x,interpolated_waypoints_y);
             double target_x2 = target_xy2[0];
             double target_y2 = target_xy2[1];
             coarse_s_traj.push_back(target_s2);
@@ -545,7 +549,8 @@ int main() {
 
           	//this_thread::sleep_for(chrono::milliseconds(1000));
           	ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
-          
+            
+            single_iteration_log.close();
         }
       } else {
         // Manual driving
@@ -571,6 +576,14 @@ int main() {
 
   h.onConnection([&h](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
     std::cout << "Connected!!!" << std::endl;
+		// DEBUG
+		for (int i = 0; i < 5; i++) {
+			for (int j = 0; j < 80; j++) {
+				cout << "#";
+			}
+			cout << endl;
+		}
+		cout << endl;
   });
 
   h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code,
@@ -587,4 +600,5 @@ int main() {
     return -1;
   }
   h.run();
+    log_file.close();
 }

@@ -6,6 +6,9 @@
 #include "Eigen-3.3/Eigen/Dense"
 #include "jmt.h"
 
+using Eigen::MatrixXd;
+using Eigen::VectorXd;
+
 using namespace std;
 
 vector<double> get_traj_coeffs(vector<double> start,vector<double> end,double T)
@@ -36,11 +39,11 @@ vector<double> get_traj_coeffs(vector<double> start,vector<double> end,double T)
 	    6*T,  12*T2,   20*T3;
 	MatrixXd aInv = a.inverse();
 
-	vectorXd b(3);
+	VectorXd b(3);
 	b << end[0] - (start[0] + start[1]*T + 0.5*start[2]*T2),
 	     end[1] - (           start[1]   +     start[2]*T),
 	     end[2] - (                            start[2]);
-	vectorXd alpha = aInv * b;
+	VectorXd alpha = aInv * b;
 
 	vector<double> output = {start[0],start[1],0.5*start[2],alpha[0],alpha[1],alpha[2]};
 	return output;
